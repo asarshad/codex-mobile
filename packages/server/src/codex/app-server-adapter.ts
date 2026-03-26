@@ -42,6 +42,29 @@ export class AppServerAdapter extends CodexAdapter {
     super();
   }
 
+  private buildTurnSandboxPolicy(): Record<string, unknown> {
+    if (this.config.codex.sandboxMode === "danger-full-access") {
+      return { type: "dangerFullAccess" };
+    }
+
+    if (this.config.codex.sandboxMode === "read-only") {
+      return {
+        type: "readOnly",
+        access: { type: "fullAccess" },
+        networkAccess: false
+      };
+    }
+
+    return {
+      type: "workspaceWrite",
+      writableRoots: [],
+      readOnlyAccess: { type: "fullAccess" },
+      networkAccess: false,
+      excludeTmpdirEnvVar: false,
+      excludeSlashTmp: false
+    };
+  }
+
   private async getFreePort(): Promise<number> {
     return new Promise((resolve, reject) => {
       const server = net.createServer();
@@ -748,6 +771,10 @@ export class AppServerAdapter extends CodexAdapter {
       cwd: string;
     }>("thread/resume", {
       threadId: sessionId,
+      approvalPolicy: this.config.codex.approvalPolicy,
+      approvalsReviewer: "user",
+      sandbox: this.config.codex.sandboxMode,
+      model: this.config.codex.model,
       persistExtendedHistory: true
     });
     this.loadedThreads.add(sessionId);
@@ -793,6 +820,10 @@ export class AppServerAdapter extends CodexAdapter {
     }
     const response = await this.request<{ turn: { id: string } }>("turn/start", {
       threadId: sessionId,
+      approvalPolicy: this.config.codex.approvalPolicy,
+      approvalsReviewer: "user",
+      sandboxPolicy: this.buildTurnSandboxPolicy(),
+      model: this.config.codex.model,
       input
     });
     return { turnId: response.turn?.id ?? null };
