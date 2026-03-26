@@ -47,14 +47,16 @@ function useTheme() {
 
 function Shell({
   children,
-  title
+  title,
+  mode = "default"
 }: {
   children: React.ReactNode;
   title: string;
+  mode?: "default" | "session";
 }) {
   const location = useLocation();
   return (
-    <div className="app-shell">
+    <div className={`app-shell ${mode === "session" ? "session-shell" : ""}`}>
       <header className="topbar">
         <div>
           <p className="eyebrow">Codex Mobile</p>
@@ -62,7 +64,7 @@ function Shell({
         </div>
         <span className="badge subtle">{navigator.onLine ? "Online" : "Offline"}</span>
       </header>
-      <main className="page">{children}</main>
+      <main className={`page ${mode === "session" ? "session-page" : ""}`}>{children}</main>
       <nav className="tabbar">
         <Link className={location.pathname === "/" ? "active" : ""} to="/">Home</Link>
         <Link className={location.pathname.startsWith("/settings") ? "active" : ""} to="/settings">Settings</Link>
@@ -136,6 +138,17 @@ function mergeSessionDetail(previous: SessionDetail | null, incoming: SessionDet
 
 function formatProjectName(projectPath: string, title: string | null): string {
   return title || projectPath.split("/").pop() || projectPath;
+}
+
+function EventMeta({ label, createdAt }: { label: string; createdAt: string }) {
+  return (
+    <div className="event-meta">
+      <span>{label}</span>
+      <time className="event-time" dateTime={createdAt}>
+        {new Date(createdAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}
+      </time>
+    </div>
+  );
 }
 
 function PairingCard({
@@ -342,7 +355,7 @@ function renderEvent(event: SessionEvent) {
     const attachmentNames = attachmentNamesFromEvent(event);
     return (
       <div className="event-card user">
-        <div className="event-meta">You</div>
+        <EventMeta label="You" createdAt={event.createdAt} />
         <p>{event.text}</p>
         {attachmentNames.length ? (
           <div className="attachment-list">
@@ -357,7 +370,7 @@ function renderEvent(event: SessionEvent) {
   if (event.type === "agent_message") {
     return (
       <div className="event-card agent">
-        <div className="event-meta">Codex</div>
+        <EventMeta label="Codex" createdAt={event.createdAt} />
         <p>{event.text}</p>
       </div>
     );
@@ -365,7 +378,7 @@ function renderEvent(event: SessionEvent) {
   if (event.type === "command") {
     return (
       <div className="event-card command">
-        <div className="event-meta">Command</div>
+        <EventMeta label="Command" createdAt={event.createdAt} />
         <pre>{event.text}</pre>
         {event.data?.aggregatedOutput ? <code>{String(event.data.aggregatedOutput)}</code> : null}
       </div>
@@ -374,7 +387,7 @@ function renderEvent(event: SessionEvent) {
   if (event.type === "command_output" || event.type === "agent_delta") {
     return (
       <div className="event-card stream">
-        <div className="event-meta">{event.type === "agent_delta" ? "Streaming reply" : "Command output"}</div>
+        <EventMeta label={event.type === "agent_delta" ? "Streaming reply" : "Command output"} createdAt={event.createdAt} />
         <pre>{event.text}</pre>
       </div>
     );
@@ -382,7 +395,7 @@ function renderEvent(event: SessionEvent) {
   const label = event.type.replace("_", " ");
   return (
     <div className={`event-card ${event.type}`}>
-      <div className="event-meta">{label}</div>
+      <EventMeta label={label} createdAt={event.createdAt} />
       <p>{event.text || JSON.stringify(event.data ?? {})}</p>
     </div>
   );
@@ -605,39 +618,51 @@ function SessionPage({
   };
 
   return (
-    <Shell title={detail?.session.title || "Session"}>
-      <section className="card compact stack">
-        <StatusRow label="Project" value={detail?.session.projectPath ?? "Loading..."} />
-        <StatusRow label="Transport" value={detail?.session.adapter ?? "Unknown"} tone={detail?.session.adapter === "app-server" ? "good" : "warn"} />
-        <StatusRow label="Events" value={connected ? "Live stream + sync" : "Syncing"} tone={connected ? "good" : "warn"} />
-        <div className="inline-actions">
-          <button className="button ghost" onClick={() => void refresh()}>Refresh</button>
-          <button className="button ghost" onClick={() => void api.interrupt(csrfToken, sessionId).then(refresh)}>Interrupt</button>
-        </div>
-      </section>
-
-      {detail?.pendingApprovals.length ? (
-        <section className="card stack">
-          <h2>Approvals</h2>
-          {detail.pendingApprovals.map((approval) => (
-            <ApprovalCard key={approval.id} approval={approval} csrfToken={csrfToken} onResolved={refresh} />
-          ))}
+    <Shell title={detail?.session.title || "Session"} mode="session">
+      <section className="session-layout">
+        <section className="session-ribbon">
+          <div className="session-ribbon-main">
+            <div className="chip-row">
+              <span className={`badge ${detail?.session.adapter === "app-server" ? "good" : "warn"}`}>
+                {detail?.session.adapter ?? "Unknown"}
+              </span>
+              <span className={`badge ${connected ? "good" : "warn"}`}>
+                {connected ? "Live stream" : "Reconnecting"}
+              </span>
+              <span className="badge subtle">{mergedEvents.length} events</span>
+            </div>
+            <p className="session-path">{detail?.session.projectPath ?? "Loading project path..."}</p>
+          </div>
+          <div className="session-ribbon-actions">
+            <button className="button ghost" onClick={() => void refresh()}>Refresh</button>
+            <button className="button ghost" onClick={() => void api.interrupt(csrfToken, sessionId).then(refresh)}>Interrupt</button>
+          </div>
         </section>
-      ) : null}
 
-      <section className="card logs-card stack">
-        <div className="section-header">
-          <h2>Output</h2>
-          <span className="muted">{mergedEvents.length} events</span>
-        </div>
-        <div className="events" ref={eventsRef}>
-          {mergedEvents.map((event) => (
-            <div key={`${event.id}-${event.createdAt}`}>{renderEvent(event)}</div>
-          ))}
-        </div>
-      </section>
+        {detail?.pendingApprovals.length ? (
+          <section className="session-approvals">
+            {detail.pendingApprovals.map((approval) => (
+              <ApprovalCard key={approval.id} approval={approval} csrfToken={csrfToken} onResolved={refresh} />
+            ))}
+          </section>
+        ) : null}
 
-      <form className="composer" onSubmit={sendMessage}>
+        <section className="session-stream">
+          <div className="session-stream-header">
+            <div>
+              <h2>Live Output</h2>
+              <p className="muted">Messages, streamed deltas, commands, and approvals stay in one feed.</p>
+            </div>
+            <span className="badge subtle">{detail?.session.status ?? "loading"}</span>
+          </div>
+          <div className="events session-events" ref={eventsRef}>
+            {mergedEvents.map((event) => (
+              <div key={`${event.id}-${event.createdAt}`}>{renderEvent(event)}</div>
+            ))}
+          </div>
+        </section>
+
+        <form className="composer composer-panel" onSubmit={sendMessage}>
         {attachments.length ? (
           <div className="attachment-list">
             {attachments.map((attachment, index) => (
@@ -675,7 +700,8 @@ function SessionPage({
             {sending ? "Sending..." : "Send"}
           </button>
         </div>
-      </form>
+        </form>
+      </section>
 
       {error ? <p className="error-text">{error}</p> : null}
     </Shell>

@@ -62,6 +62,11 @@ textarea {
   padding: env(safe-area-inset-top) 16px calc(88px + env(safe-area-inset-bottom));
 }
 
+.app-shell.session-shell {
+  padding-left: 12px;
+  padding-right: 12px;
+}
+
 .topbar {
   display: flex;
   align-items: flex-start;
@@ -89,6 +94,10 @@ textarea {
   display: flex;
   flex-direction: column;
   gap: 14px;
+}
+
+.page.session-page {
+  min-height: calc(100vh - 154px - env(safe-area-inset-bottom));
 }
 
 .stack.compact {
@@ -259,8 +268,96 @@ textarea {
   padding-right: 4px;
 }
 
-.logs-card {
+.session-layout {
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  gap: 12px;
+  flex: 1;
+  min-height: inherit;
+}
+
+.session-ribbon,
+.session-stream,
+.composer-panel {
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.62);
+  backdrop-filter: blur(12px);
+}
+
+:root[data-theme="dark"] .session-ribbon,
+:root[data-theme="dark"] .session-stream,
+:root[data-theme="dark"] .composer-panel {
+  background: rgba(10, 23, 20, 0.78);
+}
+
+.session-ribbon {
+  border-radius: 22px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+}
+
+.session-ribbon-main {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+.session-ribbon-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.session-path {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.84rem;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.session-approvals {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.session-stream {
+  border-radius: 24px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.session-stream-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.session-stream-header h2 {
+  margin: 0;
+}
+
+.session-stream-header p {
+  margin: 4px 0 0;
+}
+
+.session-events {
+  flex: 1;
+  min-height: 0;
+  max-height: none;
   padding: 14px;
+  padding-right: 14px;
+  gap: 12px;
 }
 
 .event-card {
@@ -334,10 +431,20 @@ textarea {
 }
 
 .event-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
   color: var(--primary);
   font-size: 0.75rem;
   text-transform: uppercase;
   letter-spacing: 0.08em;
+}
+
+.event-time {
+  color: var(--muted);
+  font-size: 0.72rem;
+  letter-spacing: 0;
 }
 
 .approval-card {
@@ -359,6 +466,43 @@ textarea {
   position: sticky;
   bottom: 78px;
   gap: 10px;
+}
+
+.composer-panel {
+  border-radius: 22px;
+  padding: 12px;
+  box-shadow: 0 12px 30px rgba(15, 23, 42, 0.08);
+}
+
+.session-shell .event-card {
+  background: transparent;
+  border-radius: 0;
+  border: 0;
+  border-left: 3px solid transparent;
+  padding: 0 0 0 12px;
+}
+
+.session-shell .event-card.user {
+  border-left-color: rgba(15, 118, 110, 0.55);
+}
+
+.session-shell .event-card.agent {
+  border-left-color: rgba(15, 23, 42, 0.2);
+}
+
+.session-shell .event-card.command,
+.session-shell .event-card.command_output {
+  border-left-color: rgba(99, 102, 241, 0.35);
+}
+
+.session-shell .event-card.stream,
+.session-shell .event-card.plan,
+.session-shell .event-card.reasoning {
+  border-left-color: rgba(15, 118, 110, 0.28);
+}
+
+.session-shell .event-card.error {
+  border-left-color: rgba(185, 28, 28, 0.55);
 }
 
 .composer-actions {
@@ -428,7 +572,10 @@ textarea {
   .status-row,
   .inline-actions,
   .approval-actions,
-  .composer-actions {
+  .composer-actions,
+  .session-ribbon,
+  .session-ribbon-actions,
+  .session-stream-header {
     align-items: stretch;
     flex-direction: column;
   }
@@ -446,11 +593,20 @@ textarea {
   .session-meta {
     align-items: flex-start;
   }
+
+  .page.session-page {
+    min-height: calc(100vh - 146px - env(safe-area-inset-bottom));
+  }
 }
 
 @media (min-width: 920px) {
-  .app-shell {
+  .app-shell:not(.session-shell) {
     max-width: 760px;
+    margin: 0 auto;
+  }
+
+  .app-shell.session-shell {
+    max-width: min(1440px, calc(100vw - 32px));
     margin: 0 auto;
   }
 }
