@@ -353,6 +353,18 @@ export class AppServerAdapter extends CodexAdapter {
       };
     }
 
+    if (method === "command/exec/outputDelta") {
+      return {
+        id: crypto.randomUUID(),
+        sessionId,
+        createdAt: now,
+        type: "command_output",
+        turnId: String(params.turnId ?? ""),
+        itemId: String(params.itemId ?? params.processId ?? ""),
+        text: String(params.delta ?? "")
+      };
+    }
+
     if (method === "item/fileChange/outputDelta") {
       return {
         id: crypto.randomUUID(),
@@ -476,6 +488,18 @@ export class AppServerAdapter extends CodexAdapter {
       }
     }
 
+    if (method === "item/plan/delta") {
+      return {
+        id: crypto.randomUUID(),
+        sessionId,
+        createdAt: now,
+        type: "plan",
+        turnId: String(params.turnId ?? ""),
+        itemId: String(params.itemId ?? ""),
+        text: String(params.delta ?? "")
+      };
+    }
+
     if (method === "turn/plan/updated") {
       const plan = Array.isArray(params.plan) ? params.plan : [];
       const text = plan
@@ -503,6 +527,86 @@ export class AppServerAdapter extends CodexAdapter {
         turnId: String(params.turnId ?? ""),
         itemId: String(params.itemId ?? ""),
         text: String(params.delta ?? "")
+      };
+    }
+
+    if (method === "item/reasoning/summaryPartAdded") {
+      const part = params.part as Record<string, unknown> | undefined;
+      return {
+        id: crypto.randomUUID(),
+        sessionId,
+        createdAt: now,
+        type: "reasoning",
+        turnId: String(params.turnId ?? ""),
+        itemId: String(params.itemId ?? ""),
+        text: String(part?.text ?? "")
+      };
+    }
+
+    if (method === "turn/diff/updated") {
+      return {
+        id: crypto.randomUUID(),
+        sessionId,
+        createdAt: now,
+        type: "file_change",
+        turnId: String(params.turnId ?? ""),
+        text: String(params.diff ?? ""),
+        data: {
+          diff: params.diff
+        }
+      };
+    }
+
+    if (method === "hook/started" || method === "hook/completed") {
+      const run = params.run as Record<string, unknown> | undefined;
+      const entries = Array.isArray(run?.entries) ? run.entries as Array<Record<string, unknown>> : [];
+      const text = entries.map((entry) => String(entry.text ?? "")).filter(Boolean).join("\n");
+      return {
+        id: crypto.randomUUID(),
+        sessionId,
+        createdAt: now,
+        type: "system",
+        turnId: typeof params.turnId === "string" ? params.turnId : undefined,
+        text: text || `${method}: ${String(run?.eventName ?? "hook")}`,
+        data: {
+          method,
+          eventName: run?.eventName,
+          status: run?.status,
+          handlerType: run?.handlerType
+        }
+      };
+    }
+
+    if (method === "item/autoApprovalReview/started" || method === "item/autoApprovalReview/completed") {
+      const review = params.review as Record<string, unknown> | undefined;
+      return {
+        id: crypto.randomUUID(),
+        sessionId,
+        createdAt: now,
+        type: "system",
+        turnId: String(params.turnId ?? ""),
+        itemId: String(params.targetItemId ?? ""),
+        text: `${method}: ${String(review?.status ?? "unknown")}`,
+        data: {
+          status: review?.status,
+          riskLevel: review?.riskLevel,
+          rationale: review?.rationale
+        }
+      };
+    }
+
+    if (method === "terminalInteraction") {
+      return {
+        id: crypto.randomUUID(),
+        sessionId,
+        createdAt: now,
+        type: "system",
+        turnId: String(params.turnId ?? ""),
+        itemId: String(params.itemId ?? ""),
+        text: String(params.stdin ?? ""),
+        data: {
+          processId: params.processId
+        }
       };
     }
 
@@ -846,7 +950,12 @@ export class AppServerAdapter extends CodexAdapter {
         turnId: approval.turnId,
         itemId: approval.itemId,
         type: "approval_resolved",
-        text: `Resolved approval: ${approval.summary}`
+        text: `Resolved approval: ${approval.summary}`,
+        data: {
+          approvalId,
+          kind: approval.kind,
+          resolution: body
+        }
       }
     });
   }

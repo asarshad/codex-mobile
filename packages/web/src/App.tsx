@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, UIEvent, useEffect, useMemo, useRef, useState } from "react";
 import { BrowserRouter, Link, Route, Routes, useLocation, useNavigate, useParams } from "react-router-dom";
 import { api } from "./api";
 import { AuthStatusResponse, DraftAttachment, PendingApproval, ProjectInfo, SessionDetail, SessionEvent, SessionSummary } from "./types";
@@ -35,14 +35,57 @@ function attachmentNamesFromEvent(event: SessionEvent): string[] {
 }
 
 function useTheme() {
-  const [theme, setTheme] = useState(() => localStorage.getItem(THEME_STORAGE_KEY) ?? "light");
+  const [theme, setTheme] = useState(() => localStorage.getItem(THEME_STORAGE_KEY) ?? "dark");
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
+    document.documentElement.classList.toggle("dark", theme === "dark");
     localStorage.setItem(THEME_STORAGE_KEY, theme);
   }, [theme]);
 
   return { theme, setTheme };
+}
+
+function MenuIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M4 7h16M4 12h16M4 17h16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function HomeIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M4 11.5 12 5l8 6.5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M7.5 10.5V19h9v-8.5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function SettingsIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M12 8.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7Z" fill="none" stroke="currentColor" strokeWidth="1.8" />
+      <path d="M19 12a7 7 0 0 0-.1-1l2-1.5-2-3.5-2.4 1a8.2 8.2 0 0 0-1.7-1l-.3-2.5h-4l-.3 2.5a8.2 8.2 0 0 0-1.7 1l-2.4-1-2 3.5 2 1.5a7 7 0 0 0 0 2l-2 1.5 2 3.5 2.4-1a8.2 8.2 0 0 0 1.7 1l.3 2.5h4l.3-2.5a8.2 8.2 0 0 0 1.7-1l2.4 1 2-3.5-2-1.5c.1-.3.1-.7.1-1Z" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function PaperclipIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M8.5 12.5 14.8 6.2a3 3 0 1 1 4.2 4.2L10.6 18.8a5 5 0 1 1-7.1-7.1l8.1-8.1" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function SendIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="m4 12 15-7-4.5 7L19 19 4 12Z" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
 }
 
 function Shell({
@@ -55,6 +98,12 @@ function Shell({
   mode?: "default" | "session";
 }) {
   const location = useLocation();
+  const [menuOpen, setMenuOpen] = useState(false);
+
+  useEffect(() => {
+    setMenuOpen(false);
+  }, [location.pathname]);
+
   return (
     <div className={`app-shell ${mode === "session" ? "session-shell" : ""}`}>
       <header className="topbar">
@@ -62,13 +111,32 @@ function Shell({
           <p className="eyebrow">Codex Mobile</p>
           <h1>{title}</h1>
         </div>
-        <span className="badge subtle">{navigator.onLine ? "Online" : "Offline"}</span>
+        <div className="topbar-actions">
+          <span className="badge subtle">{navigator.onLine ? "Online" : "Offline"}</span>
+          <button
+            className="icon-button ghost"
+            type="button"
+            aria-label="Open navigation menu"
+            aria-expanded={menuOpen}
+            onClick={() => setMenuOpen((open) => !open)}
+          >
+            <MenuIcon />
+          </button>
+        </div>
+        {menuOpen ? (
+          <div className="topbar-menu">
+            <Link className={location.pathname === "/" ? "active" : ""} to="/">
+              <HomeIcon />
+              <span>Home</span>
+            </Link>
+            <Link className={location.pathname.startsWith("/settings") ? "active" : ""} to="/settings">
+              <SettingsIcon />
+              <span>Settings</span>
+            </Link>
+          </div>
+        ) : null}
       </header>
       <main className={`page ${mode === "session" ? "session-page" : ""}`}>{children}</main>
-      <nav className="tabbar">
-        <Link className={location.pathname === "/" ? "active" : ""} to="/">Home</Link>
-        <Link className={location.pathname.startsWith("/settings") ? "active" : ""} to="/settings">Settings</Link>
-      </nav>
     </div>
   );
 }
@@ -89,7 +157,11 @@ function identityForEvent(event: SessionEvent): string {
   return `${event.type}:${event.id}:${event.text ?? ""}`;
 }
 
-function mergeSessionDetail(previous: SessionDetail | null, incoming: SessionDetail): SessionDetail {
+function mergeSessionDetail(
+  previous: SessionDetail | null,
+  incoming: SessionDetail,
+  options: { replaceApprovals?: boolean } = {}
+): SessionDetail {
   if (!previous) {
     return incoming;
   }
@@ -125,6 +197,28 @@ function mergeSessionDetail(previous: SessionDetail | null, incoming: SessionDet
   }
 
   const approvalMap = new Map(previous.pendingApprovals.map((approval) => [approval.id, approval]));
+
+  for (const event of incoming.events) {
+    if (event.type === "approval_resolved") {
+      const resolvedApprovalId = typeof event.data?.approvalId === "string" ? event.data.approvalId : null;
+      if (resolvedApprovalId) {
+        approvalMap.delete(resolvedApprovalId);
+        continue;
+      }
+      if (event.itemId) {
+        for (const [approvalId, approval] of approvalMap.entries()) {
+          if (approval.itemId === event.itemId) {
+            approvalMap.delete(approvalId);
+          }
+        }
+      }
+    }
+  }
+
+  if (options.replaceApprovals) {
+    approvalMap.clear();
+  }
+
   for (const approval of incoming.pendingApprovals) {
     approvalMap.set(approval.id, approval);
   }
@@ -411,20 +505,27 @@ function ApprovalCard({
   onResolved: () => Promise<void>;
 }) {
   const [busy, setBusy] = useState(false);
+  const [localError, setLocalError] = useState<string | null>(null);
   const approve = async () => {
     setBusy(true);
+    setLocalError(null);
     try {
       await api.approve(csrfToken, approval.sessionId, approval.id, approval.kind === "permissions" ? { scope: "turn" } : {});
       await onResolved();
+    } catch (approvalError) {
+      setLocalError(approvalError instanceof Error ? approvalError.message : "Could not approve request.");
     } finally {
       setBusy(false);
     }
   };
   const reject = async () => {
     setBusy(true);
+    setLocalError(null);
     try {
       await api.reject(csrfToken, approval.sessionId, approval.id);
       await onResolved();
+    } catch (approvalError) {
+      setLocalError(approvalError instanceof Error ? approvalError.message : "Could not reject request.");
     } finally {
       setBusy(false);
     }
@@ -435,6 +536,7 @@ function ApprovalCard({
         <strong>{approval.summary}</strong>
         {approval.detail ? <p>{approval.detail}</p> : null}
         <small>Expires {new Date(approval.expiresAt).toLocaleTimeString()}</small>
+        {localError ? <p className="error-text">{localError}</p> : null}
       </div>
       <div className="approval-actions">
         <button className="button secondary" onClick={reject} disabled={busy}>Reject</button>
@@ -456,6 +558,7 @@ function SessionPage({
   const [attachments, setAttachments] = useState<DraftAttachment[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [connected, setConnected] = useState(false);
+  const [shouldFollowLogs, setShouldFollowLogs] = useState(true);
   const [sending, setSending] = useState(false);
   const socketRef = useRef<WebSocket | null>(null);
   const eventsRef = useRef<HTMLDivElement | null>(null);
@@ -463,7 +566,7 @@ function SessionPage({
 
   const refresh = async () => {
     const session = await api.getSession(csrfToken, sessionId);
-    setDetail((previous) => mergeSessionDetail(previous, session));
+    setDetail((previous) => mergeSessionDetail(previous, session, { replaceApprovals: true }));
   };
 
   useEffect(() => {
@@ -480,7 +583,7 @@ function SessionPage({
       try {
         const session = await api.getSession(csrfToken, sessionId);
         if (!cancelled) {
-          setDetail((previous) => mergeSessionDetail(previous, session));
+          setDetail((previous) => mergeSessionDetail(previous, session, { replaceApprovals: true }));
         }
       } catch (pollError) {
         if (!cancelled) {
@@ -560,14 +663,14 @@ function SessionPage({
 
   useEffect(() => {
     const container = eventsRef.current;
-    if (!container) {
+    if (!container || !shouldFollowLogs) {
       return;
     }
     const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
-    if (distanceFromBottom < 120) {
+    if (distanceFromBottom < 96) {
       container.scrollTop = container.scrollHeight;
     }
-  }, [detail?.events.length]);
+  }, [detail?.events, shouldFollowLogs]);
 
   const mergedEvents = useMemo(() => detail?.events ?? [], [detail?.events]);
 
@@ -617,6 +720,12 @@ function SessionPage({
     }
   };
 
+  const handleEventsScroll = (event: UIEvent<HTMLDivElement>) => {
+    const container = event.currentTarget;
+    const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
+    setShouldFollowLogs(distanceFromBottom < 72);
+  };
+
   return (
     <Shell title={detail?.session.title || "Session"} mode="session">
       <section className="session-layout">
@@ -653,9 +762,14 @@ function SessionPage({
               <h2>Live Output</h2>
               <p className="muted">Messages, streamed deltas, commands, and approvals stay in one feed.</p>
             </div>
-            <span className="badge subtle">{detail?.session.status ?? "loading"}</span>
+            <div className="chip-row">
+              <span className="badge subtle">{detail?.session.status ?? "loading"}</span>
+              <span className={`badge ${shouldFollowLogs ? "good" : "subtle"}`}>
+                {shouldFollowLogs ? "Following" : "Paused"}
+              </span>
+            </div>
           </div>
-          <div className="events session-events" ref={eventsRef}>
+          <div className="events session-events" ref={eventsRef} onScroll={handleEventsScroll}>
             {mergedEvents.map((event) => (
               <div key={`${event.id}-${event.createdAt}`}>{renderEvent(event)}</div>
             ))}
@@ -692,13 +806,26 @@ function SessionPage({
             void loadFiles(event.target.files);
           }}
         />
-        <div className="composer-actions">
-          <button className="button ghost" type="button" onClick={() => fileInputRef.current?.click()} disabled={sending}>
-            Attach Files
-          </button>
-          <button className="button primary" type="submit" disabled={sending || (!message.trim() && attachments.length === 0)}>
-            {sending ? "Sending..." : "Send"}
-          </button>
+        <div className="composer-input-row">
+          <div className="composer-actions">
+            <button
+              className="icon-button ghost"
+              type="button"
+              aria-label="Attach files"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={sending}
+            >
+              <PaperclipIcon />
+            </button>
+            <button
+              className="icon-button primary"
+              type="submit"
+              aria-label="Send message"
+              disabled={sending || (!message.trim() && attachments.length === 0)}
+            >
+              <SendIcon />
+            </button>
+          </div>
         </div>
         </form>
       </section>
