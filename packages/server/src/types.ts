@@ -101,6 +101,13 @@ export type SessionSummary = {
   source: string;
 };
 
+export type MessageAttachmentInput = {
+  name: string;
+  type: string;
+  size: number;
+  contentBase64: string;
+};
+
 export type SessionEvent = {
   id: string;
   sessionId: string;
@@ -170,4 +177,3 @@ export type HealthResponse = {
   fallback: AdapterHealth;
   auth: CodexAuthStatus;
 };
-

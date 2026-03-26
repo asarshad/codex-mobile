@@ -3,7 +3,7 @@ import crypto from "node:crypto";
 import { normalizeInsideRoots } from "./paths";
 import { HttpError } from "./errors";
 import { StateStore } from "./store";
-import { AppConfig, SessionDetail, SessionEvent, SessionSummary } from "./types";
+import { AppConfig, MessageAttachmentInput, SessionDetail, SessionEvent, SessionSummary } from "./types";
 import { CodexCoordinator } from "./codex";
 
 export class SessionService {
@@ -100,7 +100,7 @@ export class SessionService {
     return [...events].sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
   }
 
-  async sendMessage(sessionId: string, text: string): Promise<{ turnId: string | null }> {
+  async sendMessage(sessionId: string, text: string, attachments: MessageAttachmentInput[] = []): Promise<{ turnId: string | null }> {
     const existing = (await this.listSessions()).find((entry) => entry.id === sessionId);
     if (!existing) {
       throw new HttpError(404, "session_not_found", "Session not found.");
@@ -112,11 +112,18 @@ export class SessionService {
       sessionId,
       createdAt: now,
       type: "user_message",
-      text
+      text,
+      data: attachments.length > 0 ? {
+        attachments: attachments.map((attachment) => ({
+          name: attachment.name,
+          type: attachment.type,
+          size: attachment.size
+        }))
+      } : undefined
     };
 
     this.codex.adapterForSession(existing).emit("event", { sessionId, event: userEvent });
-    const response = await this.codex.adapterForSession(existing).sendMessage(sessionId, text);
+    const response = await this.codex.adapterForSession(existing).sendMessage(sessionId, text, attachments);
     this.store.upsertSession({
       id: existing.id,
       adapter: existing.adapter,
@@ -143,4 +150,3 @@ export class SessionService {
     await this.codex.adapterForSession(detail.session).interrupt(sessionId);
   }
 }
-

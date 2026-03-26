@@ -2,6 +2,7 @@ import http from "node:http";
 import crypto from "node:crypto";
 import express, { NextFunction, Request, Response } from "express";
 import { WebSocketServer } from "ws";
+import { validateAttachments } from "./attachments";
 import { loadConfig } from "./config";
 import { HttpError, isHttpError } from "./errors";
 import { listProjects } from "./projects";
@@ -54,7 +55,7 @@ export async function createRuntime(
   });
 
   app.disable("x-powered-by");
-  app.use(express.json({ limit: "1mb" }));
+  app.use(express.json({ limit: "12mb" }));
   app.use((req, _res, next) => {
     if (!config.server.allowLan && !isLoopbackRequest(req)) {
       next(new HttpError(403, "localhost_only", "LAN access is disabled. Use localhost or enable allowLan."));
@@ -205,10 +206,11 @@ export async function createRuntime(
   app.post("/api/sessions/:id/message", requireAuth, async (req, res, next) => {
     try {
       const text = String(req.body?.text ?? "").trim();
-      if (!text) {
-        throw new HttpError(400, "message_invalid", "Message text is required.");
+      const attachments = validateAttachments(req.body?.attachments);
+      if (!text && attachments.length === 0) {
+        throw new HttpError(400, "message_invalid", "Message text or at least one attachment is required.");
       }
-      res.json(await sessions.sendMessage(String(req.params.id), text));
+      res.json(await sessions.sendMessage(String(req.params.id), text, attachments));
     } catch (error) {
       next(error);
     }
@@ -286,7 +288,8 @@ export async function createRuntime(
   });
 
   server.on("upgrade", (req, socket, head) => {
-    if (req.url !== "/api/events") {
+    const requestUrl = new URL(req.url ?? "", `http://${req.headers.host}`);
+    if (requestUrl.pathname !== "/api/events") {
       socket.destroy();
       return;
     }
@@ -294,7 +297,6 @@ export async function createRuntime(
     const fakeReq = req as Request;
     try {
       const deviceSession = auth.requireAuth(fakeReq);
-      const requestUrl = new URL(req.url ?? "", `http://${req.headers.host}`);
       const csrfToken = requestUrl.searchParams.get("csrfToken");
       if (csrfToken !== deviceSession.session.csrfToken) {
         throw new HttpError(403, "csrf_invalid", "Missing or invalid CSRF token.");

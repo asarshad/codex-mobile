@@ -90,3 +90,9 @@ export type SessionDetail = {
   pendingApprovals: PendingApproval[];
 };
 
+export type DraftAttachment = {
+  name: string;
+  type: string;
+  size: number;
+  contentBase64: string;
+};

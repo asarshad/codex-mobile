@@ -6,6 +6,8 @@ import WebSocket from "ws";
 import { AppConfig, PendingApproval, SessionDetail, SessionEvent, SessionSummary, AdapterHealth, CodexAuthStatus } from "../types";
 import { CodexAdapter } from "./types";
 import { HttpError } from "../errors";
+import { attachmentToBinaryNote, attachmentToTextContext, isImageAttachment, isTextAttachment } from "../attachments";
+import { MessageAttachmentInput } from "../types";
 
 type JsonRpcResponse = {
   id: number | string;
@@ -31,6 +33,7 @@ export class AppServerAdapter extends CodexAdapter {
   private readonly pendingRequests = new Map<number, PendingResolver>();
   private readonly pendingApprovals = new Map<string, PendingApprovalRecord>();
   private readonly activeTurns = new Map<string, string>();
+  private readonly loadedThreads = new Set<string>();
   private nextRequestId = 1;
   private connectPromise: Promise<void> | null = null;
   private unavailableReason: string | null = null;
@@ -280,6 +283,16 @@ export class AppServerAdapter extends CodexAdapter {
     if (method === "turn/started" && typeof params.threadId === "string" && typeof (params.turn as Record<string, unknown>)?.id === "string") {
       this.activeTurns.set(params.threadId, String((params.turn as Record<string, unknown>).id));
     }
+    if (method === "turn/completed" && typeof params.threadId === "string") {
+      this.activeTurns.delete(params.threadId);
+    }
+    if (method === "thread/closed" && typeof params.threadId === "string") {
+      this.activeTurns.delete(params.threadId);
+      this.loadedThreads.delete(params.threadId);
+    }
+    if ((method === "thread/started" || method === "thread/status/changed") && typeof params.threadId === "string") {
+      this.loadedThreads.add(params.threadId);
+    }
 
     if (!sessionId) {
       return;
@@ -406,7 +419,107 @@ export class AppServerAdapter extends CodexAdapter {
       }
     }
 
+    if (method === "item/started") {
+      const item = params.item as Record<string, unknown> | undefined;
+      if (!item) {
+        return null;
+      }
+      const type = String(item.type ?? "");
+      if (type === "commandExecution") {
+        return {
+          id: String(item.id ?? crypto.randomUUID()),
+          sessionId,
+          createdAt: now,
+          type: "command",
+          turnId: String(params.turnId ?? ""),
+          itemId: String(item.id ?? ""),
+          text: String(item.command ?? ""),
+          data: {
+            cwd: item.cwd,
+            status: item.status
+          }
+        };
+      }
+      if (type === "plan") {
+        return {
+          id: String(item.id ?? crypto.randomUUID()),
+          sessionId,
+          createdAt: now,
+          type: "plan",
+          turnId: String(params.turnId ?? ""),
+          itemId: String(item.id ?? ""),
+          text: String(item.text ?? "")
+        };
+      }
+    }
+
+    if (method === "turn/plan/updated") {
+      const plan = Array.isArray(params.plan) ? params.plan : [];
+      const text = plan
+        .map((step) => {
+          const value = step as Record<string, unknown>;
+          return `${String(value.status ?? "").toUpperCase()} ${String(value.step ?? "")}`.trim();
+        })
+        .join("\n");
+      return {
+        id: crypto.randomUUID(),
+        sessionId,
+        createdAt: now,
+        type: "plan",
+        turnId: String(params.turnId ?? ""),
+        text: text || String(params.explanation ?? "")
+      };
+    }
+
+    if (method === "item/reasoning/summaryTextDelta" || method === "item/reasoning/textDelta") {
+      return {
+        id: crypto.randomUUID(),
+        sessionId,
+        createdAt: now,
+        type: "reasoning",
+        turnId: String(params.turnId ?? ""),
+        itemId: String(params.itemId ?? ""),
+        text: String(params.delta ?? "")
+      };
+    }
+
     return null;
+  }
+
+  private formatThreadStatus(status: unknown): string {
+    if (!status || typeof status !== "object") {
+      return "unknown";
+    }
+    const value = status as Record<string, unknown>;
+    const type = String(value.type ?? "unknown");
+    if (type === "active") {
+      const activeFlags = Array.isArray(value.activeFlags) ? value.activeFlags.length : 0;
+      return activeFlags > 0 ? `active (${activeFlags})` : "active";
+    }
+    return type;
+  }
+
+  private isActiveStatus(status: unknown): boolean {
+    return typeof status === "object" && status !== null && (status as Record<string, unknown>).type === "active";
+  }
+
+  private async ensureThreadLoaded(sessionId: string): Promise<void> {
+    await this.ensureConnected();
+    if (this.loadedThreads.has(sessionId)) {
+      return;
+    }
+    const loaded = await this.request<{ data: string[] }>("thread/loaded/list", {});
+    for (const threadId of loaded.data ?? []) {
+      this.loadedThreads.add(String(threadId));
+    }
+    if (this.loadedThreads.has(sessionId)) {
+      return;
+    }
+    await this.request("thread/resume", {
+      threadId: sessionId,
+      persistExtendedHistory: true
+    });
+    this.loadedThreads.add(sessionId);
   }
 
   private async respondWithError(id: number, code: number, message: string): Promise<void> {
@@ -478,8 +591,8 @@ export class AppServerAdapter extends CodexAdapter {
       projectPath: String(thread.cwd ?? ""),
       createdAt: new Date(Number(thread.createdAt ?? 0) * 1000).toISOString(),
       updatedAt: new Date(Number(thread.updatedAt ?? 0) * 1000).toISOString(),
-      status: String(thread.status ?? "idle"),
-      active: this.activeTurns.has(String(thread.id)),
+      status: this.formatThreadStatus(thread.status),
+      active: this.isActiveStatus(thread.status),
       source: typeof (thread.source as Record<string, unknown>)?.kind === "string"
         ? String((thread.source as Record<string, unknown>).kind)
         : "codex"
@@ -570,6 +683,7 @@ export class AppServerAdapter extends CodexAdapter {
   }
 
   async getSession(sessionId: string): Promise<SessionDetail> {
+    await this.ensureThreadLoaded(sessionId);
     const response = await this.request<{ thread: Record<string, unknown> }>("thread/read", {
       threadId: sessionId,
       includeTurns: true
@@ -585,8 +699,8 @@ export class AppServerAdapter extends CodexAdapter {
         projectPath: String(thread.cwd ?? ""),
         createdAt: new Date(Number(thread.createdAt ?? 0) * 1000).toISOString(),
         updatedAt: new Date(Number(thread.updatedAt ?? 0) * 1000).toISOString(),
-        status: String(thread.status ?? "idle"),
-        active: this.activeTurns.has(sessionId),
+        status: this.formatThreadStatus(thread.status),
+        active: this.isActiveStatus(thread.status),
         source: typeof (thread.source as Record<string, unknown>)?.kind === "string"
           ? String((thread.source as Record<string, unknown>).kind)
           : "codex"
@@ -612,6 +726,7 @@ export class AppServerAdapter extends CodexAdapter {
       experimentalRawEvents: false,
       persistExtendedHistory: true
     });
+    this.loadedThreads.add(String(response.thread.id));
 
     return {
       id: String(response.thread.id),
@@ -621,8 +736,8 @@ export class AppServerAdapter extends CodexAdapter {
       projectPath: String(response.cwd ?? projectPath),
       createdAt: new Date(Number(response.thread.createdAt ?? 0) * 1000).toISOString(),
       updatedAt: new Date(Number(response.thread.updatedAt ?? 0) * 1000).toISOString(),
-      status: String(response.thread.status ?? "idle"),
-      active: false,
+      status: this.formatThreadStatus(response.thread.status),
+      active: this.isActiveStatus(response.thread.status),
       source: "codex-mobile"
     };
   }
@@ -635,6 +750,7 @@ export class AppServerAdapter extends CodexAdapter {
       threadId: sessionId,
       persistExtendedHistory: true
     });
+    this.loadedThreads.add(sessionId);
     return {
       id: String(response.thread.id),
       adapter: this.kind,
@@ -643,17 +759,41 @@ export class AppServerAdapter extends CodexAdapter {
       projectPath: String(response.cwd ?? response.thread.cwd ?? ""),
       createdAt: new Date(Number(response.thread.createdAt ?? 0) * 1000).toISOString(),
       updatedAt: new Date(Number(response.thread.updatedAt ?? 0) * 1000).toISOString(),
-      status: String(response.thread.status ?? "idle"),
-      active: this.activeTurns.has(sessionId),
+      status: this.formatThreadStatus(response.thread.status),
+      active: this.isActiveStatus(response.thread.status),
       source: "codex-mobile"
     };
   }
 
-  async sendMessage(sessionId: string, text: string): Promise<{ turnId: string | null }> {
-    await this.resumeSession(sessionId).catch(() => undefined);
+  async sendMessage(sessionId: string, text: string, attachments: MessageAttachmentInput[] = []): Promise<{ turnId: string | null }> {
+    await this.ensureThreadLoaded(sessionId);
+    const input: Array<Record<string, unknown>> = [];
+    if (text.trim()) {
+      input.push({ type: "text", text, text_elements: [] });
+    }
+    for (const attachment of attachments) {
+      if (isImageAttachment(attachment)) {
+        input.push({
+          type: "image",
+          url: `data:${attachment.type || "application/octet-stream"};base64,${attachment.contentBase64}`
+        });
+      } else if (isTextAttachment(attachment)) {
+        input.push({
+          type: "text",
+          text: attachmentToTextContext(attachment),
+          text_elements: []
+        });
+      } else {
+        input.push({
+          type: "text",
+          text: attachmentToBinaryNote(attachment),
+          text_elements: []
+        });
+      }
+    }
     const response = await this.request<{ turn: { id: string } }>("turn/start", {
       threadId: sessionId,
-      input: [{ type: "text", text, text_elements: [] }]
+      input
     });
     return { turnId: response.turn?.id ?? null };
   }

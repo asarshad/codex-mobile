@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events";
-import { AdapterHealth, CodexAuthStatus, PendingApproval, SessionDetail, SessionEvent, SessionSummary } from "../types";
+import { AdapterHealth, CodexAuthStatus, MessageAttachmentInput, PendingApproval, SessionDetail, SessionEvent, SessionSummary } from "../types";
 
 export type RuntimeEventPayload = {
   sessionId: string;
@@ -26,10 +26,9 @@ export abstract class CodexAdapter extends EventEmitter {
   abstract getSession(sessionId: string): Promise<SessionDetail>;
   abstract createSession(projectPath: string): Promise<SessionSummary>;
   abstract resumeSession(sessionId: string): Promise<SessionSummary>;
-  abstract sendMessage(sessionId: string, text: string): Promise<{ turnId: string | null }>;
+  abstract sendMessage(sessionId: string, text: string, attachments?: MessageAttachmentInput[]): Promise<{ turnId: string | null }>;
   abstract approve(sessionId: string, approvalId: string, payload?: Record<string, unknown>): Promise<void>;
   abstract reject(sessionId: string, approvalId: string): Promise<void>;
   abstract interrupt(sessionId: string): Promise<void>;
   abstract close(): Promise<void>;
 }
-

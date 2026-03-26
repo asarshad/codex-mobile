@@ -1,10 +1,11 @@
 import { spawn } from "node:child_process";
 import crypto from "node:crypto";
 import path from "node:path";
-import { AppConfig, AdapterHealth, CodexAuthStatus, SessionDetail, SessionEvent, SessionSummary } from "../types";
+import { AppConfig, AdapterHealth, CodexAuthStatus, MessageAttachmentInput, SessionDetail, SessionEvent, SessionSummary } from "../types";
 import { HttpError } from "../errors";
 import { StateStore } from "../store";
 import { CodexAdapter } from "./types";
+import { attachmentToBinaryNote, attachmentToTextContext, isImageAttachment, isTextAttachment } from "../attachments";
 
 type CliSummary = {
   threadId: string | null;
@@ -220,11 +221,21 @@ export class CliAdapter extends CodexAdapter {
     };
   }
 
-  async sendMessage(sessionId: string, text: string): Promise<{ turnId: string | null }> {
+  async sendMessage(sessionId: string, text: string, attachments: MessageAttachmentInput[] = []): Promise<{ turnId: string | null }> {
     const session = this.store.listSessions().find((entry) => entry.id === sessionId);
     if (!session) {
       throw new HttpError(404, "session_not_found", "Session not found.");
     }
+
+    const attachmentContext = attachments.map((attachment) => {
+      if (isTextAttachment(attachment)) {
+        return attachmentToTextContext(attachment);
+      }
+      if (isImageAttachment(attachment)) {
+        return `Attached image: ${attachment.name} (${attachment.type}, ${attachment.size} bytes). Image attachments are best supported through the App Server path.`;
+      }
+      return attachmentToBinaryNote(attachment);
+    }).join("\n\n");
 
     const summary = await this.runJsonCommand([
       "exec",
@@ -234,7 +245,7 @@ export class CliAdapter extends CodexAdapter {
       "read-only",
       "-C",
       session.projectPath,
-      text
+      attachmentContext ? `${text}\n\n${attachmentContext}` : text
     ], session.projectPath);
 
     for (const event of summary.events) {
@@ -272,4 +283,3 @@ export class CliAdapter extends CodexAdapter {
 
   async close(): Promise<void> {}
 }
-

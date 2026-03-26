@@ -1,10 +1,38 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { BrowserRouter, Link, Route, Routes, useLocation, useNavigate, useParams } from "react-router-dom";
 import { api } from "./api";
-import { AuthStatusResponse, PendingApproval, ProjectInfo, SessionDetail, SessionEvent, SessionSummary } from "./types";
+import { AuthStatusResponse, DraftAttachment, PendingApproval, ProjectInfo, SessionDetail, SessionEvent, SessionSummary } from "./types";
 
 const THEME_STORAGE_KEY = "codex-mobile-theme";
 const SERVER_URL_STORAGE_KEY = "codex-mobile-server-url";
+
+function arrayBufferToBase64(buffer: ArrayBuffer): string {
+  const bytes = new Uint8Array(buffer);
+  const chunkSize = 0x8000;
+  let binary = "";
+
+  for (let index = 0; index < bytes.length; index += chunkSize) {
+    const chunk = bytes.subarray(index, index + chunkSize);
+    binary += String.fromCharCode(...chunk);
+  }
+
+  return btoa(binary);
+}
+
+function attachmentNamesFromEvent(event: SessionEvent): string[] {
+  const attachments = event.data?.attachments;
+  if (!Array.isArray(attachments)) {
+    return [];
+  }
+
+  return attachments.flatMap((entry) => {
+    if (!entry || typeof entry !== "object") {
+      return [];
+    }
+    const name = (entry as { name?: unknown }).name;
+    return typeof name === "string" ? [name] : [];
+  });
+}
 
 function useTheme() {
   const [theme, setTheme] = useState(() => localStorage.getItem(THEME_STORAGE_KEY) ?? "light");
@@ -50,6 +78,64 @@ function StatusRow({ label, value, tone = "default" }: { label: string; value: s
       <span className={`badge ${tone}`}>{value}</span>
     </div>
   );
+}
+
+function identityForEvent(event: SessionEvent): string {
+  if (event.itemId || event.turnId) {
+    return `${event.type}:${event.turnId ?? ""}:${event.itemId ?? event.id}`;
+  }
+  return `${event.type}:${event.id}:${event.text ?? ""}`;
+}
+
+function mergeSessionDetail(previous: SessionDetail | null, incoming: SessionDetail): SessionDetail {
+  if (!previous) {
+    return incoming;
+  }
+
+  const events = [...previous.events];
+  const indexByIdentity = new Map<string, number>();
+
+  events.forEach((event, index) => {
+    indexByIdentity.set(identityForEvent(event), index);
+  });
+
+  for (const nextEvent of incoming.events) {
+    if (nextEvent.itemId) {
+      for (let index = events.length - 1; index >= 0; index -= 1) {
+        const existing = events[index];
+        if (!existing) {
+          continue;
+        }
+        if (existing.turnId === nextEvent.turnId && existing.itemId === nextEvent.itemId && (existing.type === "agent_delta" || existing.type === "command_output")) {
+          events.splice(index, 1);
+        }
+      }
+    }
+
+    const identity = identityForEvent(nextEvent);
+    const existingIndex = indexByIdentity.get(identity);
+    if (existingIndex === undefined) {
+      indexByIdentity.set(identity, events.length);
+      events.push(nextEvent);
+    } else {
+      events[existingIndex] = { ...events[existingIndex], ...nextEvent };
+    }
+  }
+
+  const approvalMap = new Map(previous.pendingApprovals.map((approval) => [approval.id, approval]));
+  for (const approval of incoming.pendingApprovals) {
+    approvalMap.set(approval.id, approval);
+  }
+
+  return {
+    session: incoming.session,
+    events,
+    pendingApprovals: [...approvalMap.values()]
+  };
+}
+
+function formatProjectName(projectPath: string, title: string | null): string {
+  return title || projectPath.split("/").pop() || projectPath;
 }
 
 function PairingCard({
@@ -182,18 +268,18 @@ function HomePage({
 
   return (
     <Shell title="Home">
-      <section className="card stack">
-        <h2>Status</h2>
-        <StatusRow label="Pairing" value="Paired" tone="good" />
-        <StatusRow
-          label="Codex login"
-          value={authStatus.codexAuth.loggedIn ? authStatus.codexAuth.authMethod ?? "Logged in" : "Not logged in"}
-          tone={authStatus.codexAuth.loggedIn ? "good" : "warn"}
-        />
-        <StatusRow label="Server" value={window.location.origin} />
+      <section className="card compact stack">
+        <div className="chip-row">
+          <span className="badge good">Paired</span>
+          <span className={`badge ${authStatus.codexAuth.loggedIn ? "good" : "warn"}`}>
+            {authStatus.codexAuth.loggedIn ? authStatus.codexAuth.authMethod ?? "Logged in" : "Codex login needed"}
+          </span>
+          <span className="badge subtle">LAN</span>
+        </div>
+        <p className="muted">Server: {window.location.origin}</p>
       </section>
 
-      <section className="card stack">
+      <section className="card compact stack">
         <div className="section-header">
           <div>
             <h2>Projects</h2>
@@ -228,14 +314,14 @@ function HomePage({
         <p className="muted">Manual paths are only accepted when they stay inside allowed roots.</p>
       </section>
 
-      <section className="card stack">
+      <section className="card compact stack">
         <h2>Recent Sessions</h2>
         <div className="stack compact">
           {sessions.length === 0 ? <p className="muted">No sessions yet.</p> : null}
           {sessions.map((session) => (
             <button key={session.id} className="session-card" onClick={() => void createSession(undefined, session.id)}>
               <div>
-                <strong>{session.title || session.projectPath.split("/").pop()}</strong>
+                <strong>{formatProjectName(session.projectPath, session.title)}</strong>
                 <p>{session.projectPath}</p>
               </div>
               <div className="session-meta">
@@ -252,6 +338,30 @@ function HomePage({
 }
 
 function renderEvent(event: SessionEvent) {
+  if (event.type === "user_message") {
+    const attachmentNames = attachmentNamesFromEvent(event);
+    return (
+      <div className="event-card user">
+        <div className="event-meta">You</div>
+        <p>{event.text}</p>
+        {attachmentNames.length ? (
+          <div className="attachment-list">
+            {attachmentNames.map((name) => (
+              <span key={name} className="attachment-pill">{name}</span>
+            ))}
+          </div>
+        ) : null}
+      </div>
+    );
+  }
+  if (event.type === "agent_message") {
+    return (
+      <div className="event-card agent">
+        <div className="event-meta">Codex</div>
+        <p>{event.text}</p>
+      </div>
+    );
+  }
   if (event.type === "command") {
     return (
       <div className="event-card command">
@@ -330,18 +440,59 @@ function SessionPage({
   const sessionId = params.id!;
   const [detail, setDetail] = useState<SessionDetail | null>(null);
   const [message, setMessage] = useState("");
+  const [attachments, setAttachments] = useState<DraftAttachment[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [connected, setConnected] = useState(false);
   const [sending, setSending] = useState(false);
   const socketRef = useRef<WebSocket | null>(null);
+  const eventsRef = useRef<HTMLDivElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const refresh = async () => {
     const session = await api.getSession(csrfToken, sessionId);
-    setDetail(session);
+    setDetail((previous) => mergeSessionDetail(previous, session));
   };
 
   useEffect(() => {
     void refresh().catch((loadError) => setError(loadError instanceof Error ? loadError.message : "Could not load session."));
+  }, [csrfToken, sessionId]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const tick = async () => {
+      if (document.visibilityState === "hidden") {
+        return;
+      }
+      try {
+        const session = await api.getSession(csrfToken, sessionId);
+        if (!cancelled) {
+          setDetail((previous) => mergeSessionDetail(previous, session));
+        }
+      } catch (pollError) {
+        if (!cancelled) {
+          setError(pollError instanceof Error ? pollError.message : "Could not refresh session.");
+        }
+      }
+    };
+
+    const intervalId = window.setInterval(() => {
+      void tick();
+    }, 2000);
+
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        void tick();
+      }
+    };
+
+    document.addEventListener("visibilitychange", onVisibilityChange);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
   }, [csrfToken, sessionId]);
 
   useEffect(() => {
@@ -364,10 +515,10 @@ function SessionPage({
             approval?: PendingApproval;
           };
           if (payload.type === "session_event" && payload.event) {
-            setDetail((previous) => previous ? { ...previous, events: [...previous.events, payload.event!] } : previous);
+            setDetail((previous) => previous ? mergeSessionDetail(previous, { ...previous, events: [payload.event!], pendingApprovals: previous.pendingApprovals }) : previous);
           }
           if (payload.type === "approval" && payload.approval) {
-            setDetail((previous) => previous ? { ...previous, pendingApprovals: [...previous.pendingApprovals, payload.approval!] } : previous);
+            setDetail((previous) => previous ? mergeSessionDetail(previous, { ...previous, events: [], pendingApprovals: [payload.approval!] }) : previous);
           }
         } catch {
           return;
@@ -394,18 +545,57 @@ function SessionPage({
     };
   }, [csrfToken, sessionId]);
 
+  useEffect(() => {
+    const container = eventsRef.current;
+    if (!container) {
+      return;
+    }
+    const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
+    if (distanceFromBottom < 120) {
+      container.scrollTop = container.scrollHeight;
+    }
+  }, [detail?.events.length]);
+
   const mergedEvents = useMemo(() => detail?.events ?? [], [detail?.events]);
+
+  const loadFiles = async (files: FileList | null) => {
+    if (!files?.length) {
+      return;
+    }
+
+    setError(null);
+    try {
+      const loaded = await Promise.all(Array.from(files).map(async (file) => ({
+        name: file.name,
+        type: file.type || "application/octet-stream",
+        size: file.size,
+        contentBase64: arrayBufferToBase64(await file.arrayBuffer())
+      })));
+      setAttachments((previous) => [...previous, ...loaded]);
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : "Could not attach those files.");
+    } finally {
+      if (fileInputRef.current) {
+        fileInputRef.current.value = "";
+      }
+    }
+  };
 
   const sendMessage = async (event: FormEvent) => {
     event.preventDefault();
-    if (!message.trim()) {
+    const trimmedMessage = message.trim();
+    if (!trimmedMessage && attachments.length === 0) {
       return;
     }
     setSending(true);
     setError(null);
     try {
-      await api.sendMessage(csrfToken, sessionId, message.trim());
+      await api.sendMessage(csrfToken, sessionId, trimmedMessage, attachments);
       setMessage("");
+      setAttachments([]);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = "";
+      }
       await refresh();
     } catch (sendError) {
       setError(sendError instanceof Error ? sendError.message : "Could not send message.");
@@ -416,10 +606,10 @@ function SessionPage({
 
   return (
     <Shell title={detail?.session.title || "Session"}>
-      <section className="card stack">
+      <section className="card compact stack">
         <StatusRow label="Project" value={detail?.session.projectPath ?? "Loading..."} />
         <StatusRow label="Transport" value={detail?.session.adapter ?? "Unknown"} tone={detail?.session.adapter === "app-server" ? "good" : "warn"} />
-        <StatusRow label="Events" value={connected ? "Live" : "Reconnecting"} tone={connected ? "good" : "warn"} />
+        <StatusRow label="Events" value={connected ? "Live stream + sync" : "Syncing"} tone={connected ? "good" : "warn"} />
         <div className="inline-actions">
           <button className="button ghost" onClick={() => void refresh()}>Refresh</button>
           <button className="button ghost" onClick={() => void api.interrupt(csrfToken, sessionId).then(refresh)}>Interrupt</button>
@@ -435,9 +625,12 @@ function SessionPage({
         </section>
       ) : null}
 
-      <section className="card stack">
-        <h2>Output</h2>
-        <div className="events">
+      <section className="card logs-card stack">
+        <div className="section-header">
+          <h2>Output</h2>
+          <span className="muted">{mergedEvents.length} events</span>
+        </div>
+        <div className="events" ref={eventsRef}>
           {mergedEvents.map((event) => (
             <div key={`${event.id}-${event.createdAt}`}>{renderEvent(event)}</div>
           ))}
@@ -445,15 +638,43 @@ function SessionPage({
       </section>
 
       <form className="composer" onSubmit={sendMessage}>
+        {attachments.length ? (
+          <div className="attachment-list">
+            {attachments.map((attachment, index) => (
+              <button
+                key={`${attachment.name}-${attachment.size}-${index}`}
+                className="attachment-pill removable"
+                type="button"
+                onClick={() => setAttachments((previous) => previous.filter((_, attachmentIndex) => attachmentIndex !== index))}
+              >
+                {attachment.name}
+              </button>
+            ))}
+          </div>
+        ) : null}
         <textarea
           placeholder="Ask Codex to inspect, edit, review, or continue the session..."
           value={message}
           onChange={(event) => setMessage(event.target.value)}
           rows={4}
         />
-        <button className="button primary" type="submit" disabled={sending || !message.trim()}>
-          {sending ? "Sending..." : "Send"}
-        </button>
+        <input
+          ref={fileInputRef}
+          className="visually-hidden"
+          type="file"
+          multiple
+          onChange={(event) => {
+            void loadFiles(event.target.files);
+          }}
+        />
+        <div className="composer-actions">
+          <button className="button ghost" type="button" onClick={() => fileInputRef.current?.click()} disabled={sending}>
+            Attach Files
+          </button>
+          <button className="button primary" type="submit" disabled={sending || (!message.trim() && attachments.length === 0)}>
+            {sending ? "Sending..." : "Send"}
+          </button>
+        </div>
       </form>
 
       {error ? <p className="error-text">{error}</p> : null}
@@ -475,7 +696,7 @@ function SettingsPage({
 
   return (
     <Shell title="Settings">
-      <section className="card stack">
+      <section className="card compact stack">
         <h2>Server URL</h2>
         <input value={serverUrl} onChange={(event) => setServerUrl(event.target.value)} />
         <button
@@ -493,7 +714,7 @@ function SettingsPage({
         {saved ? <p className="muted">Saved.</p> : null}
       </section>
 
-      <section className="card stack">
+      <section className="card compact stack">
         <h2>Appearance</h2>
         <div className="inline-actions">
           <button className={`button ${theme === "light" ? "primary" : "secondary"}`} onClick={() => setTheme("light")}>Light</button>
@@ -501,7 +722,7 @@ function SettingsPage({
         </div>
       </section>
 
-      <section className="card stack">
+      <section className="card compact stack">
         <h2>Paired Device</h2>
         {authStatus?.device ? (
           <>

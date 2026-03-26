@@ -32,10 +32,10 @@
   "scripts": {
     "setup:config": "node scripts/init-config.mjs",
     "doctor": "node scripts/doctor.mjs",
-    "dev": "concurrently -n server,web -c blue,green \"npm run dev --workspace @codex-mobile/server\" \"npm run dev --workspace @codex-mobile/web\"",
-    "build": "npm run build --workspace @codex-mobile/web && npm run build --workspace @codex-mobile/server",
-    "start": "npm run start --workspace @codex-mobile/server",
-    "test": "npm run test --workspace @codex-mobile/server"
+    "dev": "concurrently -n server,web -c blue,green \"npm --prefix packages/server run dev\" \"npm --prefix packages/web run dev\"",
+    "build": "npm --prefix packages/web run build && npm --prefix packages/server run build",
+    "start": "npm --prefix packages/server run start",
+    "test": "npm --prefix packages/server run test"
   },
   "devDependencies": {
     "concurrently": "^9.1.2"

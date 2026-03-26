@@ -1,4 +1,4 @@
-import { AuthStatusResponse, ProjectInfo, SessionDetail, SessionSummary } from "./types";
+import { AuthStatusResponse, DraftAttachment, ProjectInfo, SessionDetail, SessionSummary } from "./types";
 
 type RequestOptions = {
   method?: string;
@@ -45,11 +45,11 @@ export const api = {
     }),
   getSession: (csrfToken: string, sessionId: string) =>
     request<SessionDetail>(`/api/sessions/${sessionId}`, { csrfToken }),
-  sendMessage: (csrfToken: string, sessionId: string, text: string) =>
+  sendMessage: (csrfToken: string, sessionId: string, text: string, attachments: DraftAttachment[] = []) =>
     request<{ turnId: string | null }>(`/api/sessions/${sessionId}/message`, {
       method: "POST",
       csrfToken,
-      body: { text }
+      body: { text, attachments }
     }),
   approve: (csrfToken: string, sessionId: string, approvalId: string, payload: Record<string, unknown> = {}) =>
     request<{ ok: true }>(`/api/sessions/${sessionId}/approve`, {
@@ -69,4 +69,3 @@ export const api = {
       csrfToken
     })
 };
-
