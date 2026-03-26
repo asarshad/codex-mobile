@@ -630,6 +630,40 @@ export class AppServerAdapter extends CodexAdapter {
     return typeof status === "object" && status !== null && (status as Record<string, unknown>).type === "active";
   }
 
+  private normalizeTimestamp(value: unknown): string | null {
+    if (typeof value === "string") {
+      const parsed = Date.parse(value);
+      return Number.isNaN(parsed) ? null : new Date(parsed).toISOString();
+    }
+
+    if (typeof value === "number" && Number.isFinite(value)) {
+      const milliseconds = value > 1_000_000_000_000 ? value : value * 1000;
+      return new Date(milliseconds).toISOString();
+    }
+
+    return null;
+  }
+
+  private buildHistoryTimestamp(
+    threadBaseTimestamp: string,
+    turn: Record<string, unknown>,
+    item: Record<string, unknown>,
+    sequence: number
+  ): string {
+    const directTimestamp = this.normalizeTimestamp(item.createdAt)
+      ?? this.normalizeTimestamp(item.startedAt)
+      ?? this.normalizeTimestamp(item.completedAt)
+      ?? this.normalizeTimestamp(turn.createdAt)
+      ?? this.normalizeTimestamp(turn.startedAt)
+      ?? this.normalizeTimestamp(turn.completedAt);
+
+    if (directTimestamp) {
+      return new Date(Date.parse(directTimestamp) + sequence).toISOString();
+    }
+
+    return new Date(Date.parse(threadBaseTimestamp) + sequence).toISOString();
+  }
+
   private async ensureThreadLoaded(sessionId: string): Promise<void> {
     await this.ensureConnected();
     if (this.loadedThreads.has(sessionId)) {
@@ -726,12 +760,15 @@ export class AppServerAdapter extends CodexAdapter {
     }));
   }
 
-  private mapThreadEvents(sessionId: string, turns: Array<Record<string, unknown>>): SessionEvent[] {
+  private mapThreadEvents(sessionId: string, turns: Array<Record<string, unknown>>, threadBaseTimestamp: string): SessionEvent[] {
     const events: SessionEvent[] = [];
+    let sequence = 0;
     for (const turn of turns) {
       const turnId = String(turn.id ?? "");
       const items = Array.isArray(turn.items) ? (turn.items as Array<Record<string, unknown>>) : [];
       for (const item of items) {
+        const createdAt = this.buildHistoryTimestamp(threadBaseTimestamp, turn, item, sequence);
+        sequence += 1;
         const type = String(item.type ?? "");
         if (type === "userMessage") {
           const content = Array.isArray(item.content) ? item.content : [];
@@ -742,7 +779,7 @@ export class AppServerAdapter extends CodexAdapter {
           events.push({
             id: String(item.id),
             sessionId,
-            createdAt: new Date().toISOString(),
+            createdAt,
             type: "user_message",
             turnId,
             itemId: String(item.id),
@@ -752,7 +789,7 @@ export class AppServerAdapter extends CodexAdapter {
           events.push({
             id: String(item.id),
             sessionId,
-            createdAt: new Date().toISOString(),
+            createdAt,
             type: "agent_message",
             turnId,
             itemId: String(item.id),
@@ -762,7 +799,7 @@ export class AppServerAdapter extends CodexAdapter {
           events.push({
             id: String(item.id),
             sessionId,
-            createdAt: new Date().toISOString(),
+            createdAt,
             type: "command",
             turnId,
             itemId: String(item.id),
@@ -777,7 +814,7 @@ export class AppServerAdapter extends CodexAdapter {
           events.push({
             id: String(item.id),
             sessionId,
-            createdAt: new Date().toISOString(),
+            createdAt,
             type: "plan",
             turnId,
             itemId: String(item.id),
@@ -787,7 +824,7 @@ export class AppServerAdapter extends CodexAdapter {
           events.push({
             id: String(item.id),
             sessionId,
-            createdAt: new Date().toISOString(),
+            createdAt,
             type: "reasoning",
             turnId,
             itemId: String(item.id),
@@ -797,7 +834,7 @@ export class AppServerAdapter extends CodexAdapter {
           events.push({
             id: String(item.id),
             sessionId,
-            createdAt: new Date().toISOString(),
+            createdAt,
             type: "file_change",
             turnId,
             itemId: String(item.id),
@@ -832,7 +869,11 @@ export class AppServerAdapter extends CodexAdapter {
           ? String((thread.source as Record<string, unknown>).kind)
           : "codex"
       },
-      events: this.mapThreadEvents(sessionId, turns),
+      events: this.mapThreadEvents(
+        sessionId,
+        turns,
+        new Date(Number(thread.createdAt ?? 0) * 1000).toISOString()
+      ),
       pendingApprovals: [...this.pendingApprovals.values()]
         .filter((entry) => entry.sessionId === sessionId)
         .map(({ timer: _timer, requestId: _requestId, ...approval }) => approval)

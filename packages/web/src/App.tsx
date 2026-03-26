@@ -1,10 +1,13 @@
-import { FormEvent, UIEvent, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { BrowserRouter, Link, Route, Routes, useLocation, useNavigate, useParams } from "react-router-dom";
 import { api } from "./api";
 import { AuthStatusResponse, DraftAttachment, PendingApproval, ProjectInfo, SessionDetail, SessionEvent, SessionSummary } from "./types";
 
 const THEME_STORAGE_KEY = "codex-mobile-theme";
 const SERVER_URL_STORAGE_KEY = "codex-mobile-server-url";
+const FEED_FILTERS = ["all", "conversation", "terminal"] as const;
+
+type FeedFilter = (typeof FEED_FILTERS)[number];
 
 function arrayBufferToBase64(buffer: ArrayBuffer): string {
   const bytes = new Uint8Array(buffer);
@@ -83,7 +86,7 @@ function PaperclipIcon() {
 function SendIcon() {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true">
-      <path d="m4 12 15-7-4.5 7L19 19 4 12Z" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M20 12 5 5l4.5 7L5 19l15-7Z" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
 }
@@ -223,6 +226,8 @@ function mergeSessionDetail(
     approvalMap.set(approval.id, approval);
   }
 
+  events.sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
+
   return {
     session: incoming.session,
     events,
@@ -243,6 +248,28 @@ function EventMeta({ label, createdAt }: { label: string; createdAt: string }) {
       </time>
     </div>
   );
+}
+
+function eventMatchesFilter(event: SessionEvent, filter: FeedFilter): boolean {
+  if (filter === "all") {
+    return true;
+  }
+
+  if (filter === "conversation") {
+    return ["user_message", "agent_message", "agent_delta", "plan", "reasoning"].includes(event.type);
+  }
+
+  return ["command", "command_output", "file_change", "system", "error", "approval", "approval_resolved", "status"].includes(event.type);
+}
+
+function filterLabel(filter: FeedFilter): string {
+  if (filter === "conversation") {
+    return "Conversation";
+  }
+  if (filter === "terminal") {
+    return "Terminal";
+  }
+  return "Everything";
 }
 
 function PairingCard({
@@ -444,7 +471,44 @@ function HomePage({
   );
 }
 
+function ReasoningCard({ event }: { event: SessionEvent }) {
+  const [open, setOpen] = useState(false);
+  if (!event.text) return null;
+  return (
+    <div className="event-card reasoning-card">
+      <button className="reasoning-toggle" type="button" onClick={() => setOpen((v) => !v)}>
+        <span className="reasoning-icon">💭</span>
+        <span>Thinking{open ? "" : "…"}</span>
+        <span className="reasoning-chevron">{open ? "▲" : "▼"}</span>
+      </button>
+      {open ? <p className="reasoning-body">{event.text}</p> : null}
+    </div>
+  );
+}
+
 function renderEvent(event: SessionEvent) {
+  if (event.type === "status") {
+    return null;
+  }
+  if (event.type === "reasoning") {
+    return <ReasoningCard event={event} />;
+  }
+  if (event.type === "plan") {
+    return (
+      <div className="event-card plan-card">
+        <EventMeta label="Plan" createdAt={event.createdAt} />
+        <pre>{event.text}</pre>
+      </div>
+    );
+  }
+  if (event.type === "file_change") {
+    return (
+      <div className="event-card file-change-card">
+        <EventMeta label="Files changed" createdAt={event.createdAt} />
+        <p>{event.text}</p>
+      </div>
+    );
+  }
   if (event.type === "user_message") {
     const attachmentNames = attachmentNamesFromEvent(event);
     return (
@@ -558,11 +622,15 @@ function SessionPage({
   const [attachments, setAttachments] = useState<DraftAttachment[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [connected, setConnected] = useState(false);
-  const [shouldFollowLogs, setShouldFollowLogs] = useState(true);
   const [sending, setSending] = useState(false);
+  const [feedFilter, setFeedFilter] = useState<FeedFilter>("all");
   const socketRef = useRef<WebSocket | null>(null);
-  const eventsRef = useRef<HTMLDivElement | null>(null);
+  const feedRef = useRef<HTMLDivElement | null>(null);
+  const feedEndRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [isAtBottom, setIsAtBottom] = useState(true);
+  const forceBottomRef = useRef(true);
+  const [isThinking, setIsThinking] = useState(false);
 
   const refresh = async () => {
     const session = await api.getSession(csrfToken, sessionId);
@@ -631,7 +699,12 @@ function SessionPage({
             approval?: PendingApproval;
           };
           if (payload.type === "session_event" && payload.event) {
-            setDetail((previous) => previous ? mergeSessionDetail(previous, { ...previous, events: [payload.event!], pendingApprovals: previous.pendingApprovals }) : previous);
+            const ev = payload.event;
+            if (ev.type === "status") {
+              if (ev.text === "turn/started") setIsThinking(true);
+              if (ev.text === "turn/completed") setIsThinking(false);
+            }
+            setDetail((previous) => previous ? mergeSessionDetail(previous, { ...previous, events: [ev], pendingApprovals: previous.pendingApprovals }) : previous);
           }
           if (payload.type === "approval" && payload.approval) {
             setDetail((previous) => previous ? mergeSessionDetail(previous, { ...previous, events: [], pendingApprovals: [payload.approval!] }) : previous);
@@ -661,18 +734,31 @@ function SessionPage({
     };
   }, [csrfToken, sessionId]);
 
+  const mergedEvents = useMemo(() => detail?.events ?? [], [detail?.events]);
+  const filteredEvents = useMemo(
+    () => mergedEvents.filter((event) => eventMatchesFilter(event, feedFilter)),
+    [feedFilter, mergedEvents]
+  );
+
+  const scrollToLatest = (behavior: ScrollBehavior = "auto") => {
+    feedEndRef.current?.scrollIntoView({ block: "end", behavior });
+  };
+
   useEffect(() => {
-    const container = eventsRef.current;
-    if (!container || !shouldFollowLogs) {
+    forceBottomRef.current = true;
+    setIsAtBottom(true);
+  }, [sessionId, feedFilter]);
+
+  useLayoutEffect(() => {
+    if (filteredEvents.length === 0) {
       return;
     }
-    const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
-    if (distanceFromBottom < 96) {
-      container.scrollTop = container.scrollHeight;
-    }
-  }, [detail?.events, shouldFollowLogs]);
 
-  const mergedEvents = useMemo(() => detail?.events ?? [], [detail?.events]);
+    if (forceBottomRef.current || isAtBottom) {
+      scrollToLatest(forceBottomRef.current ? "auto" : "smooth");
+      forceBottomRef.current = false;
+    }
+  }, [filteredEvents.length, isAtBottom]);
 
   const loadFiles = async (files: FileList | null) => {
     if (!files?.length) {
@@ -697,8 +783,7 @@ function SessionPage({
     }
   };
 
-  const sendMessage = async (event: FormEvent) => {
-    event.preventDefault();
+  const submitMessage = async () => {
     const trimmedMessage = message.trim();
     if (!trimmedMessage && attachments.length === 0) {
       return;
@@ -720,34 +805,23 @@ function SessionPage({
     }
   };
 
-  const handleEventsScroll = (event: UIEvent<HTMLDivElement>) => {
-    const container = event.currentTarget;
+  const sendMessage = async (event: FormEvent) => {
+    event.preventDefault();
+    await submitMessage();
+  };
+
+  const handleFeedScroll = () => {
+    const container = feedRef.current;
+    if (!container) {
+      return;
+    }
     const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
-    setShouldFollowLogs(distanceFromBottom < 72);
+    setIsAtBottom(distanceFromBottom < 40);
   };
 
   return (
-    <Shell title={detail?.session.title || "Session"} mode="session">
+    <Shell title="Session" mode="session">
       <section className="session-layout">
-        <section className="session-ribbon">
-          <div className="session-ribbon-main">
-            <div className="chip-row">
-              <span className={`badge ${detail?.session.adapter === "app-server" ? "good" : "warn"}`}>
-                {detail?.session.adapter ?? "Unknown"}
-              </span>
-              <span className={`badge ${connected ? "good" : "warn"}`}>
-                {connected ? "Live stream" : "Reconnecting"}
-              </span>
-              <span className="badge subtle">{mergedEvents.length} events</span>
-            </div>
-            <p className="session-path">{detail?.session.projectPath ?? "Loading project path..."}</p>
-          </div>
-          <div className="session-ribbon-actions">
-            <button className="button ghost" onClick={() => void refresh()}>Refresh</button>
-            <button className="button ghost" onClick={() => void api.interrupt(csrfToken, sessionId).then(refresh)}>Interrupt</button>
-          </div>
-        </section>
-
         {detail?.pendingApprovals.length ? (
           <section className="session-approvals">
             {detail.pendingApprovals.map((approval) => (
@@ -757,57 +831,50 @@ function SessionPage({
         ) : null}
 
         <section className="session-stream">
-          <div className="session-stream-header">
-            <div>
-              <h2>Live Output</h2>
-              <p className="muted">Messages, streamed deltas, commands, and approvals stay in one feed.</p>
-            </div>
-            <div className="chip-row">
-              <span className="badge subtle">{detail?.session.status ?? "loading"}</span>
-              <span className={`badge ${shouldFollowLogs ? "good" : "subtle"}`}>
-                {shouldFollowLogs ? "Following" : "Paused"}
-              </span>
-            </div>
-          </div>
-          <div className="events session-events" ref={eventsRef} onScroll={handleEventsScroll}>
-            {mergedEvents.map((event) => (
+          <div className="session-feed" ref={feedRef} onScroll={handleFeedScroll}>
+            {filteredEvents.map((event) => (
               <div key={`${event.id}-${event.createdAt}`}>{renderEvent(event)}</div>
             ))}
+            {isThinking ? (
+              <div className="thinking-indicator">
+                <span className="thinking-dot" /><span className="thinking-dot" /><span className="thinking-dot" />
+              </div>
+            ) : null}
+            {filteredEvents.length === 0 ? <p className="muted">No events yet.</p> : null}
+            <div ref={feedEndRef} aria-hidden="true" />
           </div>
+          {!isAtBottom ? (
+            <button
+              type="button"
+              className="scroll-to-bottom-btn"
+              aria-label="Scroll to bottom"
+              onClick={() => {
+                forceBottomRef.current = true;
+                setIsAtBottom(true);
+                scrollToLatest("smooth");
+              }}
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12l7 7 7-7" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
+            </button>
+          ) : null}
         </section>
 
         <form className="composer composer-panel" onSubmit={sendMessage}>
-        {attachments.length ? (
-          <div className="attachment-list">
-            {attachments.map((attachment, index) => (
-              <button
-                key={`${attachment.name}-${attachment.size}-${index}`}
-                className="attachment-pill removable"
-                type="button"
-                onClick={() => setAttachments((previous) => previous.filter((_, attachmentIndex) => attachmentIndex !== index))}
-              >
-                {attachment.name}
-              </button>
-            ))}
-          </div>
-        ) : null}
-        <textarea
-          placeholder="Ask Codex to inspect, edit, review, or continue the session..."
-          value={message}
-          onChange={(event) => setMessage(event.target.value)}
-          rows={4}
-        />
-        <input
-          ref={fileInputRef}
-          className="visually-hidden"
-          type="file"
-          multiple
-          onChange={(event) => {
-            void loadFiles(event.target.files);
-          }}
-        />
-        <div className="composer-input-row">
-          <div className="composer-actions">
+          {attachments.length ? (
+            <div className="attachment-list">
+              {attachments.map((attachment, index) => (
+                <button
+                  key={`${attachment.name}-${attachment.size}-${index}`}
+                  className="attachment-pill removable"
+                  type="button"
+                  onClick={() => setAttachments((previous) => previous.filter((_, attachmentIndex) => attachmentIndex !== index))}
+                >
+                  {attachment.name}
+                </button>
+              ))}
+            </div>
+          ) : null}
+          <div className="composer-row">
             <button
               className="icon-button ghost"
               type="button"
@@ -817,6 +884,18 @@ function SessionPage({
             >
               <PaperclipIcon />
             </button>
+            <textarea
+              placeholder="Message..."
+              value={message}
+              onChange={(event) => setMessage(event.target.value)}
+              onKeyDown={(event) => {
+                if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+                  event.preventDefault();
+                  void submitMessage();
+                }
+              }}
+              rows={1}
+            />
             <button
               className="icon-button primary"
               type="submit"
@@ -826,7 +905,15 @@ function SessionPage({
               <SendIcon />
             </button>
           </div>
-        </div>
+          <input
+            ref={fileInputRef}
+            className="visually-hidden"
+            type="file"
+            multiple
+            onChange={(event) => {
+              void loadFiles(event.target.files);
+            }}
+          />
         </form>
       </section>
 
@@ -918,6 +1005,23 @@ export default function App() {
       setError(loadError instanceof Error ? loadError.message : "Could not load app data.");
     });
   }, []);
+
+  useEffect(() => {
+    const setAppHeight = () => {
+      const vv = window.visualViewport;
+      const h = vv?.height ?? window.innerHeight;
+      const t = vv?.offsetTop ?? 0;
+      document.documentElement.style.setProperty("--app-height", `${h}px`);
+      document.documentElement.style.setProperty("--app-top", `${t}px`);
+    };
+    setAppHeight();
+    window.visualViewport?.addEventListener("resize", setAppHeight);
+    window.visualViewport?.addEventListener("scroll", setAppHeight);
+    return () => {
+      window.visualViewport?.removeEventListener("resize", setAppHeight);
+      window.visualViewport?.removeEventListener("scroll", setAppHeight);
+    };
+  }, [])
 
   return (
     <BrowserRouter>

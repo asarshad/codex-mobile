@@ -14,8 +14,24 @@ function check(label, fn) {
 
 const results = [];
 
+function checkGitHubAlias() {
+  try {
+    return execFileSync("ssh", ["-T", "git@github.com-asarshad"], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+  } catch (error) {
+    const stderr = error && typeof error === "object" && "stderr" in error
+      ? String((error).stderr ?? "").trim()
+      : "";
+    if (stderr.includes("successfully authenticated")) {
+      return stderr;
+    }
+    throw error;
+  }
+}
+
 results.push(check("Node.js", () => process.version));
 results.push(check("npm", () => execFileSync("npm", ["-v"], { encoding: "utf8" }).trim()));
+results.push(check("Git remote", () => execFileSync("git", ["remote", "get-url", "origin"], { encoding: "utf8" }).trim()));
+results.push(check("GitHub SSH alias", () => checkGitHubAlias()));
 results.push(check("Codex CLI", () => execFileSync("codex", ["--version"], { encoding: "utf8" }).trim()));
 results.push(check("Codex login", () => execFileSync("codex", ["login", "status"], { encoding: "utf8" }).trim()));
 results.push(check("Codex app-server", () => execFileSync("codex", ["app-server", "--help"], { encoding: "utf8" }).split("\n")[0].trim()));

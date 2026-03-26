@@ -62,7 +62,27 @@
   }
 
   .app-shell.session-shell {
-    @apply px-3;
+    position: fixed;
+    top: var(--app-top, 0px);
+    left: 0;
+    right: 0;
+    height: var(--app-height, 100svh);
+    min-height: 0;
+    padding-top: max(env(safe-area-inset-top), 0.5rem);
+    @apply flex flex-col px-3;
+    overflow: hidden;
+  }
+
+  .session-shell .topbar {
+    @apply items-center pb-3;
+  }
+
+  .session-shell .topbar h1 {
+    @apply text-xl;
+  }
+
+  .session-shell .eyebrow {
+    @apply mb-0 text-[0.6rem];
   }
 
   .topbar {
@@ -105,7 +125,8 @@
   }
 
   .page.session-page {
-    min-height: calc(100vh - 8.75rem - env(safe-area-inset-bottom));
+    min-height: 0;
+    @apply flex-1;
   }
 
   .card {
@@ -168,6 +189,10 @@
     @apply border border-white/10 bg-transparent text-slate-300 hover:bg-white/5 hover:text-white;
   }
 
+  .compact-button {
+    @apply px-3 py-1.5 text-xs;
+  }
+
   .icon-button {
     @apply inline-flex h-10 w-10 items-center justify-center rounded-2xl border border-transparent transition active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-60;
   }
@@ -212,8 +237,8 @@
   }
 
   .session-layout {
-    @apply grid flex-1 gap-3;
-    grid-template-rows: auto auto minmax(0, 1fr) auto;
+    @apply flex flex-col flex-1 gap-3;
+    min-height: 0;
   }
 
   .session-ribbon {
@@ -238,15 +263,52 @@
   }
 
   .session-stream {
-    @apply flex min-h-0 flex-col overflow-hidden rounded-[1.75rem] border border-white/10 bg-slate-950/55 shadow-glass backdrop-blur;
+    @apply flex min-h-0 flex-1 flex-col overflow-hidden rounded-[1.75rem] border border-white/10 bg-slate-950/55 shadow-glass backdrop-blur;
+    position: relative;
   }
 
   .session-stream-header {
-    @apply flex items-start justify-between gap-3 border-b border-white/10 px-4 py-3;
+    display: none;
   }
 
   .session-stream-header p {
     @apply mt-1;
+  }
+
+  .stream-heading {
+    @apply flex min-w-0 flex-col gap-2;
+  }
+
+  .stream-toolbar {
+    @apply flex flex-col items-end gap-2;
+    min-width: 0;
+  }
+
+  .stream-toolbar .chip-row {
+    justify-content: flex-end;
+  }
+
+  .toolbar-row {
+    @apply flex items-center gap-2;
+    min-width: 0;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .toolbar-row::-webkit-scrollbar {
+    display: none;
+  }
+
+  .toolbar-row > * {
+    flex: 0 0 auto;
+  }
+
+  .filter-chip {
+    @apply inline-flex items-center justify-center rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs font-medium text-slate-300 transition hover:border-teal-400/30 hover:text-white;
+  }
+
+  .filter-chip.active {
+    @apply border-teal-400/30 bg-teal-400/10 text-teal-100;
   }
 
   .events {
@@ -256,6 +318,14 @@
   .session-events {
     @apply min-h-0 flex-1 px-4 py-4;
     max-height: none;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .session-feed {
+    @apply flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-4 py-4;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
   }
 
   .event-card {
@@ -331,7 +401,8 @@
   }
 
   .composer {
-    @apply sticky bottom-0 gap-3;
+    @apply gap-3;
+    flex-shrink: 0;
   }
 
   .composer-panel {
@@ -339,12 +410,83 @@
     @apply rounded-3xl border border-white/10 bg-slate-950/90 p-3 shadow-glass backdrop-blur;
   }
 
-  .composer-input-row {
-    @apply flex items-center justify-end;
+  .composer-row {
+    @apply flex items-end gap-2;
   }
 
-  .composer-actions {
-    @apply flex items-center gap-2;
+  .composer-row textarea {
+    @apply flex-1 rounded-2xl;
+    width: auto;
+    min-width: 0;
+    min-height: 2.5rem;
+    max-height: 8rem;
+    resize: none;
+    overflow-y: auto;
+  }
+
+  .scroll-to-bottom-btn {
+    position: absolute;
+    bottom: 1rem;
+    right: 1rem;
+    @apply flex h-10 w-10 items-center justify-center rounded-full border border-white/20 bg-slate-800/90 text-slate-200 shadow-glass backdrop-blur transition hover:bg-slate-700 active:scale-95;
+  }
+
+  .scroll-to-bottom-btn svg {
+    @apply h-5 w-5;
+  }
+
+  /* Reasoning (thinking) card */
+  .reasoning-card {
+    @apply border-l-slate-500/40 bg-transparent px-0 py-0 pl-4;
+  }
+
+  .reasoning-toggle {
+    @apply flex w-full items-center gap-2 text-left text-xs text-slate-500 transition hover:text-slate-300;
+    background: none;
+    border: none;
+    padding: 0;
+    cursor: pointer;
+  }
+
+  .reasoning-icon {
+    @apply text-sm;
+  }
+
+  .reasoning-chevron {
+    @apply ml-auto text-[0.6rem];
+  }
+
+  .reasoning-body {
+    @apply mt-2 whitespace-pre-wrap break-words text-xs leading-5 text-slate-500;
+    overflow-wrap: anywhere;
+  }
+
+  /* Plan card */
+  .plan-card {
+    @apply border-l-violet-400/50;
+  }
+
+  /* File change card */
+  .file-change-card {
+    @apply border-l-emerald-400/50;
+  }
+
+  /* Thinking dots indicator */
+  .thinking-indicator {
+    @apply flex items-center gap-1 pl-4 py-2;
+  }
+
+  .thinking-dot {
+    @apply inline-block h-2 w-2 rounded-full bg-teal-400/60;
+    animation: thinking-bounce 1.2s ease-in-out infinite;
+  }
+
+  .thinking-dot:nth-child(2) { animation-delay: 0.2s; }
+  .thinking-dot:nth-child(3) { animation-delay: 0.4s; }
+
+  @keyframes thinking-bounce {
+    0%, 80%, 100% { transform: translateY(0); opacity: 0.4; }
+    40% { transform: translateY(-5px); opacity: 1; }
   }
 
   .visually-hidden {
@@ -359,14 +501,77 @@
 }
 
 @media (max-width: 640px) {
+  .app-shell.session-shell {
+    padding-left: 0;
+    padding-right: 0;
+    padding-bottom: 0;
+  }
+
+  .session-shell .topbar {
+    padding-left: 1rem;
+    padding-right: 1rem;
+  }
+
+  .session-layout {
+    gap: 0;
+  }
+
+  .session-stream {
+    border-left: 0;
+    border-right: 0;
+    border-bottom: 0;
+    border-radius: 0;
+  }
+
+  .session-stream-header {
+    padding-left: 1rem;
+    padding-right: 1rem;
+    gap: 0.5rem;
+  }
+
+  .session-feed {
+    padding-left: 1rem;
+    padding-right: 1rem;
+    padding-bottom: 1rem;
+  }
+
+  .session-shell .event-card {
+    padding-left: 0.85rem;
+  }
+
+  .session-approvals {
+    padding-left: 1rem;
+    padding-right: 1rem;
+    padding-bottom: 0.75rem;
+  }
+
+  .approval-card {
+    border-radius: 1.25rem;
+  }
+
+  .composer {
+    gap: 0;
+  }
+
+  .composer-panel {
+    border-left: 0;
+    border-right: 0;
+    border-bottom: 0;
+    border-radius: 1.5rem 1.5rem 0 0;
+    padding-left: 1rem;
+    padding-right: 1rem;
+    padding-top: 0.85rem;
+  }
+
+  .toolbar-row {
+    width: 100%;
+  }
+
   .section-header,
   .status-row,
   .inline-actions,
   .approval-actions,
-  .composer-actions,
-  .session-ribbon,
   .session-ribbon-actions,
-  .session-stream-header,
   .inline-form {
     @apply items-stretch;
     flex-direction: column;
@@ -384,10 +589,6 @@
 
   .session-meta {
     @apply items-start;
-  }
-
-  .page.session-page {
-    min-height: calc(100vh - 8rem - env(safe-area-inset-bottom));
   }
 }
 
