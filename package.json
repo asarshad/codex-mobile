@@ -1,0 +1,43 @@
+{
+  "name": "codex-mobile-app",
+  "description": "Control Codex on your Mac from your phone over your local network with a local-first PWA.",
+  "version": "0.1.0",
+  "license": "MIT",
+  "author": "Asif Arshad",
+  "homepage": "https://github.com/asarshad/codex-mobile",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/asarshad/codex-mobile.git"
+  },
+  "bugs": {
+    "url": "https://github.com/asarshad/codex-mobile/issues"
+  },
+  "keywords": [
+    "codex",
+    "pwa",
+    "mobile",
+    "lan",
+    "local-first",
+    "react",
+    "vite",
+    "macos"
+  ],
+  "workspaces": [
+    "packages/server",
+    "packages/web"
+  ],
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "setup:config": "node scripts/init-config.mjs",
+    "doctor": "node scripts/doctor.mjs",
+    "dev": "concurrently -n server,web -c blue,green \"npm run dev --workspace @codex-mobile/server\" \"npm run dev --workspace @codex-mobile/web\"",
+    "build": "npm run build --workspace @codex-mobile/web && npm run build --workspace @codex-mobile/server",
+    "start": "npm run start --workspace @codex-mobile/server",
+    "test": "npm run test --workspace @codex-mobile/server"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  }
+}

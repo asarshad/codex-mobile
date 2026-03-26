@@ -1,0 +1,31 @@
+{
+  "server": {
+    "host": "127.0.0.1",
+    "port": 4318,
+    "allowLan": false,
+    "sessionTtlDays": 14,
+    "pairingCodeTtlMinutes": 10
+  },
+  "projects": {
+    "allowedRoots": [
+      "/Users/yourname/dev/projects",
+      "/Users/yourname/work"
+    ],
+    "scanDepth": 2,
+    "maxProjects": 200,
+    "markers": [
+      ".git",
+      "package.json",
+      "pyproject.toml",
+      "Cargo.toml",
+      "go.mod"
+    ]
+  },
+  "codex": {
+    "binaryPath": "codex",
+    "preferredAdapter": "app-server",
+    "approvalPolicy": "on-request",
+    "sandboxMode": "workspace-write",
+    "model": null
+  }
+}

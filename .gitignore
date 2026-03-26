@@ -1,0 +1,11 @@
+node_modules
+dist
+.DS_Store
+.scratch
+.codex-generated
+coverage
+packages/*/dist
+packages/*/node_modules
+packages/*/coverage
+data
+codex-mobile.config.json
